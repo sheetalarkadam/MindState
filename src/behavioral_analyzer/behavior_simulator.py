@@ -67,6 +67,48 @@ class BehaviorDataGenerator:
                 'app_switches': {'mean': 0.15, 'std': 0.08}    # Minimal switching
             }
         }
+        
+        # Initialize current state for real-time generation
+        self.current_state = 'discovery_mode'
+        
+        # Simplified state transition probabilities
+        self.state_transitions = {
+            'flow_state': {
+                'flow_state': 0.8,
+                'learning_mode': 0.1,
+                'discovery_mode': 0.05,
+                'stress_state': 0.03,
+                'recovery_mode': 0.02
+            },
+            'stress_state': {
+                'stress_state': 0.7,
+                'recovery_mode': 0.2,
+                'discovery_mode': 0.05,
+                'learning_mode': 0.03,
+                'flow_state': 0.02
+            },
+            'recovery_mode': {
+                'recovery_mode': 0.6,
+                'discovery_mode': 0.2,
+                'learning_mode': 0.1,
+                'flow_state': 0.05,
+                'stress_state': 0.05
+            },
+            'discovery_mode': {
+                'discovery_mode': 0.5,
+                'learning_mode': 0.2,
+                'flow_state': 0.15,
+                'stress_state': 0.1,
+                'recovery_mode': 0.05
+            },
+            'learning_mode': {
+                'learning_mode': 0.6,
+                'flow_state': 0.2,
+                'discovery_mode': 0.1,
+                'recovery_mode': 0.05,
+                'stress_state': 0.05
+            }
+        }
     
     def generate_session_data(self, state: str, duration_minutes: int = 10) -> Dict:
         """Generate behavioral data for a complete session"""
@@ -127,6 +169,69 @@ class BehaviorDataGenerator:
         
         return session_data
     
+    def generate_realtime_event(self, session_duration: float = 0) -> Dict:
+        """Generate a single real-time behavioral event"""
+        
+        # Add temporal effects (fatigue over time)
+        fatigue_factor = min(0.3, session_duration / 3600)  # Fatigue over 1 hour
+        
+        # Add circadian rhythm effect (simplified)
+        hour = datetime.now().hour
+        circadian_effect = 0.1 * np.sin(2 * np.pi * (hour - 10) / 24)
+        
+        # State transition logic (3% chance of changing state)
+        if np.random.random() < 0.03:
+            # Use the transition probabilities
+            if self.current_state in self.state_transitions:
+                transition_probs = self.state_transitions[self.current_state]
+                states = list(transition_probs.keys())
+                probabilities = list(transition_probs.values())
+                
+                # Ensure probabilities sum to 1 (normalize if needed)
+                prob_sum = sum(probabilities)
+                probabilities = [p / prob_sum for p in probabilities]
+                
+                # Select new state
+                self.current_state = np.random.choice(states, p=probabilities)
+        
+        # Get patterns for current state
+        patterns = self.state_patterns[self.current_state]
+        
+        # Generate event with all features
+        event = {'cognitive_state': self.current_state}
+        
+        for feature, params in patterns.items():
+            # Base value from pattern
+            base_value = np.random.normal(params['mean'], params['std'])
+            
+            # Apply temporal effects
+            if feature in ['typing_speed', 'mouse_precision', 'session_focus']:
+                # These decrease with fatigue
+                value = base_value * (1 - fatigue_factor) * (1 + circadian_effect)
+            elif feature in ['typing_errors', 'app_switches', 'pause_duration']:
+                # These increase with fatigue
+                value = base_value * (1 + fatigue_factor) * (1 - circadian_effect)
+            else:
+                value = base_value
+            
+            # Ensure realistic bounds
+            if feature == 'typing_speed':
+                value = max(15, min(120, value))
+            elif feature in ['mouse_precision', 'scroll_smoothness', 'session_focus']:
+                value = max(0.1, min(1.0, value))
+            elif feature in ['typing_errors']:
+                value = max(0.001, min(0.2, value))
+            else:
+                value = max(0, value)
+            
+            event[feature] = round(value, 3)
+        
+        # Add timestamp and session info
+        event['timestamp'] = datetime.now()
+        event['session_duration'] = session_duration
+        
+        return event
+    
     def generate_dataset(self, sessions_per_state: int = 50) -> pd.DataFrame:
         """Generate a complete dataset with multiple sessions for each cognitive state"""
         
@@ -162,23 +267,37 @@ def demo_behavior_generation():
     
     generator = BehaviorDataGenerator()
     
+    # Test real-time event generation
+    print("\n1. Testing real-time event generation...")
+    for i in range(5):
+        event = generator.generate_realtime_event(session_duration=i*30)
+        print(f"   Event {i+1}: State={event['cognitive_state']}, "
+              f"Typing={event['typing_speed']:.0f}WPM, "
+              f"Focus={event['session_focus']:.2f}")
+    
+    # Test state transitions
+    print("\n2. Testing state transitions over time...")
+    for i in range(10):
+        event = generator.generate_realtime_event(session_duration=i*60)
+        print(f"   Time {i*60}s: {event['cognitive_state']}")
+    
     # Generate a small dataset for demo
-    print("\n1. Generating sample dataset...")
+    print("\n3. Generating sample dataset...")
     dataset = generator.generate_dataset(sessions_per_state=10)  # Small for demo
     
-    print(f"\n2. Dataset overview:")
+    print(f"\n4. Dataset overview:")
     print(f"   Shape: {dataset.shape}")
     print(f"   Columns: {list(dataset.columns)}")
     
-    print(f"\n3. Sample data from 'flow_state':")
+    print(f"\n5. Sample data from 'flow_state':")
     flow_data = dataset[dataset['cognitive_state'] == 'flow_state'].head(3)
     print(flow_data[['typing_speed', 'mouse_precision', 'session_focus', 'app_switches']].to_string())
     
-    print(f"\n4. Sample data from 'stress_state':")
+    print(f"\n6. Sample data from 'stress_state':")
     stress_data = dataset[dataset['cognitive_state'] == 'stress_state'].head(3)
     print(stress_data[['typing_speed', 'mouse_precision', 'session_focus', 'app_switches']].to_string())
     
-    print(f"\n5. Statistical comparison between states:")
+    print(f"\n7. Statistical comparison between states:")
     comparison = dataset.groupby('cognitive_state')[['typing_speed', 'mouse_precision', 'session_focus']].mean()
     print(comparison.round(2))
     

@@ -20,7 +20,7 @@ class BehavioralFeatureExtractor:
     def __init__(self, window_size_seconds: int = 60):
         self.window_size = window_size_seconds
         
-    def extract_session_features(self, session_events: pd.DataFrame) -> Dict:
+    def extract_session_features(self, session_events: pd.DataFrame, include_trends: bool = True) -> Dict:
         """Extract aggregated features from a session or time window"""
         
         if len(session_events) == 0:
@@ -52,17 +52,28 @@ class BehavioralFeatureExtractor:
                 features[f'{col}_max'] = session_events[col].max()
                 features[f'{col}_range'] = session_events[col].max() - session_events[col].min()
         
-        # Temporal patterns (if we have timestamps)
-        if 'session_minute' in session_events.columns and len(session_events) > 1:
+        # Temporal patterns (only if we have enough data and trends are requested)
+        if include_trends and 'session_minute' in session_events.columns and len(session_events) > 2:
             # Trend analysis - are metrics getting better or worse over time?
             time_points = session_events['session_minute'].values
             
             for col in ['typing_speed', 'session_focus', 'mouse_precision']:
                 if col in session_events.columns:
                     values = session_events[col].values
-                    # Simple linear trend
-                    trend_slope = np.polyfit(time_points, values, 1)[0]
-                    features[f'{col}_trend'] = trend_slope
+                    if len(values) > 1 and len(time_points) == len(values):
+                        try:
+                            # Simple linear trend
+                            trend_slope = np.polyfit(time_points, values, 1)[0]
+                            features[f'{col}_trend'] = trend_slope
+                        except:
+                            features[f'{col}_trend'] = 0.0
+                    else:
+                        features[f'{col}_trend'] = 0.0
+        
+        # For real-time mode without session_minute, add dummy trend features
+        elif include_trends:
+            for col in ['typing_speed', 'session_focus', 'mouse_precision']:
+                features[f'{col}_trend'] = 0.0
         
         # Derived cognitive load indicators
         if all(col in session_events.columns for col in ['typing_speed', 'typing_errors']):
@@ -88,7 +99,7 @@ class BehavioralFeatureExtractor:
         
         # Session-level features
         features['session_length'] = len(session_events)
-        features['total_duration'] = session_events['session_minute'].max() if 'session_minute' in session_events.columns else 0
+        features['total_duration'] = session_events['session_minute'].max() if 'session_minute' in session_events.columns else len(session_events)
         
         # Replace any NaN values with 0
         for key, value in features.items():
@@ -142,8 +153,10 @@ class CognitiveStateClassifier:
         print(f"Processing {len(session_groups)} sessions...")
         
         for (session_id, state), session_data in session_groups:
-            # Extract features for this session
-            session_features = self.feature_extractor.extract_session_features(session_data)
+            # Extract features for this session (with trends for training data)
+            session_features = self.feature_extractor.extract_session_features(
+                session_data, include_trends=True
+            )
             
             if session_features:  # Only add if we got valid features
                 features_list.append(session_features)
@@ -226,7 +239,7 @@ class CognitiveStateClassifier:
         
         # Feature importance (for Random Forest)
         if hasattr(best_model, 'feature_importances_'):
-            print(f"\n�� Top 10 Most Important Features:")
+            print(f"\n🔍 Top 10 Most Important Features:")
             feature_importance = pd.DataFrame({
                 'feature': self.feature_names,
                 'importance': best_model.feature_importances_
@@ -246,13 +259,29 @@ class CognitiveStateClassifier:
         if not self.is_trained:
             raise ValueError("Model must be trained before prediction")
         
-        # Extract features
-        features = self.feature_extractor.extract_session_features(behavioral_data)
+        # Extract features (without trends for real-time prediction to avoid errors)
+        features = self.feature_extractor.extract_session_features(
+            behavioral_data, include_trends=False
+        )
+        
         if not features:
             return {'state': 'unknown', 'confidence': 0.0}
         
+        # For real-time prediction, we need to add dummy trend features if they're expected
+        if self.feature_names:
+            for feature_name in self.feature_names:
+                if feature_name not in features and feature_name.endswith('_trend'):
+                    features[feature_name] = 0.0
+        
         # Convert to DataFrame with correct feature order
-        feature_df = pd.DataFrame([features])[self.feature_names]
+        try:
+            feature_df = pd.DataFrame([features])[self.feature_names]
+        except KeyError as e:
+            # If some features are still missing, fill with zeros
+            for missing_feature in self.feature_names:
+                if missing_feature not in features:
+                    features[missing_feature] = 0.0
+            feature_df = pd.DataFrame([features])[self.feature_names]
         
         # Scale features
         feature_scaled = self.scaler.transform(feature_df)
