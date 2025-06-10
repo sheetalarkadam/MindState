@@ -1,0 +1,37 @@
+# MindState Configuration
+
+app:
+  name: "MindState"
+  version: "0.1.0"
+  debug: true
+
+cognitive_states:
+  flow_state:
+    name: "Flow State"
+    description: "Deep focus, high energy"
+    complexity_tolerance: 0.8
+  stress_state: 
+    name: "Stress State"
+    description: "Overwhelmed, need calm"
+    complexity_tolerance: 0.2
+  recovery_mode:
+    name: "Recovery Mode"
+    description: "Low energy, need ease"  
+    complexity_tolerance: 0.3
+  discovery_mode:
+    name: "Discovery Mode"
+    description: "Curious, moderate energy"
+    complexity_tolerance: 0.6
+  learning_mode:
+    name: "Learning Mode"
+    description: "Alert, motivated"
+    complexity_tolerance: 0.9
+
+model:
+  random_forest:
+    n_estimators: 100
+    max_depth: 10
+  
+data:
+  synthetic_sessions_per_state: 100
+  behavioral_window_size: 30
